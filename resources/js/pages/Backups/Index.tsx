@@ -11,19 +11,24 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import AppLayout from '@/layouts/app-layout';
 import { DatabaseConnection } from '@/types/database-connection';
 import { Head, router } from '@inertiajs/react';
 import axios from 'axios';
-import { Database, Download, RefreshCw, Trash2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Database, Download, Filter, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 interface Backup {
     id: number;
+    connection_id: number;
+    connection_name: string;
+    connection_host: string;
+    connection_database: string;
     filename: string;
     size: string | null;
     path: string;
@@ -37,96 +42,90 @@ interface Backup {
 }
 
 interface Props {
-    connection: DatabaseConnection;
+    backups: Backup[];
     connections: DatabaseConnection[];
 }
 
-export default function Show({ connection, connections: allConnections }: Props) {
-    const [backups, setBackups] = useState<Backup[]>([]);
-    const [selectedTargetConnectionId, setSelectedTargetConnectionId] = useState<string>('');
-    const [loading, setLoading] = useState(false);
-    const prevBackupsRef = useRef<Backup[]>([]);
+export default function Index({ backups: initialBackups, connections }: Props) {
+    const [backups, setBackups] = useState<Backup[]>(initialBackups);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [connectionFilter, setConnectionFilter] = useState<string>('all');
+    const [statusFilter, setStatusFilter] = useState<string>('all');
     const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; backup: Backup | null }>({ open: false, backup: null });
-    const [restoreDialog, setRestoreDialog] = useState<{ open: boolean; backup: Backup | null; loading: boolean }>({ open: false, backup: null, loading: false });
+    const [restoreDialog, setRestoreDialog] = useState<{
+        open: boolean;
+        backup: Backup | null;
+        loading: boolean;
+        targetConnectionId: string;
+    }>({
+        open: false,
+        backup: null,
+        loading: false,
+        targetConnectionId: '',
+    });
 
-    const fetchBackups = async () => {
-        try {
-            const response = await axios.get(`/connections/${connection.id}/backups`);
-            setBackups(response.data);
-        } catch (error) {
-            console.error('Failed to fetch backups', error);
-        }
+    const filteredBackups = useMemo(() => {
+        return backups.filter((backup) => {
+            const matchesSearch = backup.filename.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                backup.connection_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                backup.connection_database.toLowerCase().includes(searchQuery.toLowerCase());
+
+            const matchesConnection = connectionFilter === 'all' ||
+                backup.connection_id.toString() === connectionFilter;
+
+            const matchesStatus = statusFilter === 'all' || backup.status === statusFilter;
+
+            return matchesSearch && matchesConnection && matchesStatus;
+        });
+    }, [backups, searchQuery, connectionFilter, statusFilter]);
+
+    const confirmDelete = (backup: Backup) => {
+        setDeleteDialog({ open: true, backup });
     };
 
-    useEffect(() => {
-        fetchBackups();
+    const handleDelete = () => {
+        if (!deleteDialog.backup) return;
 
-        // Poll every 1 second for real-time updates
-        const interval = setInterval(() => {
-            setBackups((currentBackups) => {
-                const hasPending = currentBackups.some(b => b.status === 'pending' || b.status === 'processing');
-                if (hasPending) {
-                    fetchBackups();
-                }
-                return currentBackups;
-            });
-        }, 1000);
-
-        return () => clearInterval(interval);
-    }, [connection.id]);
-
-    useEffect(() => {
-        backups.forEach(backup => {
-            const prevBackup = prevBackupsRef.current.find(b => b.id === backup.id);
-            if (prevBackup && prevBackup.status === 'processing' && backup.status === 'failed') {
-                toast.error(`Backup failed: ${backup.log || 'Unknown error'}`);
-            }
-            if (prevBackup && prevBackup.status === 'processing' && backup.status === 'completed') {
-                toast.success('Backup completed successfully');
-            }
-        });
-        prevBackupsRef.current = backups;
-    }, [backups]);
-
-    const handleBackup = () => {
-        setLoading(true);
-        router.post(`/connections/${connection.id}/backups`, {}, {
+        router.delete(deleteDialog.backup.delete_url, {
             onSuccess: () => {
-                toast.success('Backup started in background');
-                fetchBackups();
-                setLoading(false);
+                toast.success('Backup deleted');
+                setBackups((prev) => prev.filter((b) => b.id !== deleteDialog.backup!.id));
+                setDeleteDialog({ open: false, backup: null });
             },
             onError: () => {
-                toast.error('Failed to start backup');
-                setLoading(false);
-            }
+                toast.error('Failed to delete backup');
+                setDeleteDialog({ open: false, backup: null });
+            },
         });
     };
 
     const confirmRestore = (backup: Backup) => {
-        setSelectedTargetConnectionId(connection.id.toString());
-        setRestoreDialog({ open: true, backup, loading: false });
+        setRestoreDialog({
+            open: true,
+            backup,
+            loading: false,
+            targetConnectionId: backup.connection_id.toString(),
+        });
     };
 
     const handleRestore = () => {
-        if (!restoreDialog.backup || !selectedTargetConnectionId) return;
+        if (!restoreDialog.backup || !restoreDialog.targetConnectionId) return;
 
-        const targetConnection = allConnections.find(c => c.id.toString() === selectedTargetConnectionId);
+        const targetConnection = connections.find((c) => c.id.toString() === restoreDialog.targetConnectionId);
         if (!targetConnection) {
             toast.error('Please select a target connection');
             return;
         }
 
-        setRestoreDialog(prev => ({ ...prev, loading: true }));
+        setRestoreDialog((prev) => ({ ...prev, loading: true }));
 
-        // Show persistent notification
         const restoreToastId = toast.loading(`Starting restore to ${targetConnection.name}...`, {
             duration: Infinity,
         });
 
         // Use axios.post with CSRF token configured in app.tsx
         axios.post(restoreDialog.backup.restore_url!, {
-            target_connection_id: selectedTargetConnectionId,
+            target_connection_id: restoreDialog.targetConnectionId,
         })
         .then((response) => {
             // Store the restore ID from the response
@@ -136,22 +135,20 @@ export default function Show({ connection, connections: allConnections }: Props)
                 toast.error('Failed to get restore ID', {
                     id: restoreToastId,
                 });
-                setRestoreDialog({ open: false, backup: null, loading: false });
+                setRestoreDialog({ open: false, backup: null, loading: false, targetConnectionId: '' });
                 return;
             }
 
-            // Keep the notification open and update it
             toast.loading(`Restore in progress to ${targetConnection.name}...`, {
                 id: restoreToastId,
                 duration: Infinity,
             });
-            setRestoreDialog({ open: false, backup: null, loading: false });
+            setRestoreDialog({ open: false, backup: null, loading: false, targetConnectionId: '' });
 
-            // Poll for restore completion
             const pollInterval = setInterval(() => {
                 // Poll the restore status
                 axios.get(`/restores/${restoreId}/status`)
-                    .then(response => {
+                    .then((response) => {
                         const { status, progress, log } = response.data;
 
                         // Update the notification with progress
@@ -180,7 +177,6 @@ export default function Show({ connection, connections: allConnections }: Props)
                     });
             }, 2000);
 
-            // Stop polling after 10 minutes
             setTimeout(() => {
                 clearInterval(pollInterval);
             }, 600000);
@@ -189,102 +185,96 @@ export default function Show({ connection, connections: allConnections }: Props)
             toast.error(error.response?.data?.message || 'Failed to start restore', {
                 id: restoreToastId,
             });
-            setRestoreDialog({ open: false, backup: null, loading: false });
-        });
-    };
-
-    const confirmDelete = (backup: Backup) => {
-        setDeleteDialog({ open: true, backup });
-    };
-
-    const handleDelete = () => {
-        if (!deleteDialog.backup) return;
-
-        router.delete(deleteDialog.backup.delete_url, {
-            onSuccess: () => {
-                toast.success('Backup deleted');
-                fetchBackups();
-                setDeleteDialog({ open: false, backup: null });
-            },
-            onError: () => {
-                toast.error('Failed to delete backup');
-                setDeleteDialog({ open: false, backup: null });
-            }
+            setRestoreDialog({ open: false, backup: null, loading: false, targetConnectionId: '' });
         });
     };
 
     const getStatusVariant = (status: string) => {
         switch (status) {
-            case 'completed': return 'default';
-            case 'failed': return 'destructive';
-            case 'processing': return 'secondary';
-            default: return 'outline';
+            case 'completed':
+                return 'default';
+            case 'failed':
+                return 'destructive';
+            case 'processing':
+                return 'secondary';
+            default:
+                return 'outline';
         }
     };
 
     return (
         <AppLayout
             breadcrumbs={[
-                { title: 'Connections', href: '/connections' },
-                { title: connection.name, href: `/connections/${connection.id}` },
+                { title: 'Backups', href: '/backups' },
             ]}
         >
-            <Head title={connection.name} />
+            <Head title="All Backups" />
 
-            <div className="p-6 max-w-6xl mx-auto space-y-6">
-                {/* Connection Info Card */}
+            <div className="p-6 max-w-7xl mx-auto space-y-6">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-3xl font-bold">All Backups</h1>
+                        <p className="text-muted-foreground mt-1">
+                            Manage and restore backups from all database connections
+                        </p>
+                    </div>
+                </div>
+
                 <Card>
                     <CardHeader>
-                        <div className="flex items-start justify-between">
-                            <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                    <Database className="h-5 w-5 text-muted-foreground" />
-                                    <CardTitle className="text-2xl">{connection.name}</CardTitle>
+                        <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+                            <div className="flex-1 w-full md:max-w-sm">
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                                    <Input
+                                        placeholder="Search backups..."
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        className="pl-10"
+                                    />
                                 </div>
-                                <CardDescription>
-                                    {connection.username}@{connection.host}:{connection.port} / {connection.database}
-                                </CardDescription>
                             </div>
-                            <Button onClick={handleBackup} disabled={loading} size="lg">
-                                {loading ? 'Starting...' : 'Create Backup'}
-                            </Button>
+                            <div className="flex gap-2 w-full md:w-auto">
+                                <Select value={connectionFilter} onValueChange={setConnectionFilter}>
+                                    <SelectTrigger className="w-full md:w-[200px]">
+                                        <div className="flex items-center gap-2">
+                                            <Database className="h-4 w-4" />
+                                            <SelectValue placeholder="Filter by connection" />
+                                        </div>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Connections</SelectItem>
+                                        {connections.map((conn) => (
+                                            <SelectItem key={conn.id} value={conn.id.toString()}>
+                                                {conn.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                                    <SelectTrigger className="w-full md:w-[150px]">
+                                        <div className="flex items-center gap-2">
+                                            <Filter className="h-4 w-4" />
+                                            <SelectValue placeholder="Filter by status" />
+                                        </div>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Statuses</SelectItem>
+                                        <SelectItem value="completed">Completed</SelectItem>
+                                        <SelectItem value="processing">Processing</SelectItem>
+                                        <SelectItem value="pending">Pending</SelectItem>
+                                        <SelectItem value="failed">Failed</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         </div>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="space-y-1">
-                                <p className="text-sm text-muted-foreground">Driver</p>
-                                <p className="font-medium">{connection.driver.toUpperCase()}</p>
-                            </div>
-                            <div className="space-y-1">
-                                <p className="text-sm text-muted-foreground">Host</p>
-                                <p className="font-medium">{connection.host}</p>
-                            </div>
-                            <div className="space-y-1">
-                                <p className="text-sm text-muted-foreground">Port</p>
-                                <p className="font-medium">{connection.port}</p>
-                            </div>
-                            <div className="space-y-1">
-                                <p className="text-sm text-muted-foreground">Total Backups</p>
-                                <p className="font-medium">{backups.length}</p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                {/* Backups Table Card */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Backup History</CardTitle>
-                        <CardDescription>
-                            Manage and restore your database backups
-                        </CardDescription>
                     </CardHeader>
                     <CardContent>
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>Filename</TableHead>
+                                    <TableHead>Backup File</TableHead>
+                                    <TableHead>Source Connection</TableHead>
                                     <TableHead>Size</TableHead>
                                     <TableHead>Status</TableHead>
                                     <TableHead>Created</TableHead>
@@ -292,17 +282,25 @@ export default function Show({ connection, connections: allConnections }: Props)
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {backups.length === 0 ? (
+                                {filteredBackups.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={5} className="text-center text-muted-foreground h-32">
+                                        <TableCell colSpan={6} className="text-center text-muted-foreground h-32">
                                             No backups found. Create your first backup to get started.
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    backups.map((backup) => (
+                                    filteredBackups.map((backup) => (
                                         <TableRow key={backup.id}>
                                             <TableCell className="font-mono text-sm">
                                                 {backup.filename || 'Pending...'}
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex flex-col">
+                                                    <span className="font-medium">{backup.connection_name}</span>
+                                                    <span className="text-sm text-muted-foreground">
+                                                        {backup.connection_host}/{backup.connection_database}
+                                                    </span>
+                                                </div>
                                             </TableCell>
                                             <TableCell>{backup.size || '-'}</TableCell>
                                             <TableCell>
@@ -320,7 +318,10 @@ export default function Show({ connection, connections: allConnections }: Props)
                                                             {backup.status}
                                                         </Badge>
                                                         {backup.status === 'failed' && backup.log && (
-                                                            <p className="text-xs text-destructive max-w-[200px] truncate" title={backup.log}>
+                                                            <p
+                                                                className="text-xs text-destructive max-w-[200px] truncate"
+                                                                title={backup.log}
+                                                            >
                                                                 {backup.log}
                                                             </p>
                                                         )}
@@ -364,11 +365,15 @@ export default function Show({ connection, connections: allConnections }: Props)
                                 )}
                             </TableBody>
                         </Table>
+                        {filteredBackups.length > 0 && (
+                            <div className="mt-4 text-sm text-muted-foreground">
+                                Showing {filteredBackups.length} of {backups.length} backups
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             </div>
 
-            {/* Delete Confirmation Dialog */}
             <AlertDialog open={deleteDialog.open} onOpenChange={(open) => setDeleteDialog({ open, backup: null })}>
                 <AlertDialogContent>
                     <AlertDialogHeader>
@@ -383,15 +388,20 @@ export default function Show({ connection, connections: allConnections }: Props)
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                        <AlertDialogAction
+                            onClick={handleDelete}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
                             Delete
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
 
-            {/* Restore Confirmation Dialog */}
-            <AlertDialog open={restoreDialog.open} onOpenChange={(open) => setRestoreDialog({ open: false, backup: null, loading: false })}>
+            <AlertDialog
+                open={restoreDialog.open}
+                onOpenChange={(open) => setRestoreDialog({ open: false, backup: null, loading: false, targetConnectionId: '' })}
+            >
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>Restore Database</AlertDialogTitle>
@@ -401,18 +411,24 @@ export default function Show({ connection, connections: allConnections }: Props)
                             <span className="font-mono text-sm mt-2 block font-semibold text-foreground">
                                 {restoreDialog.backup?.filename}
                             </span>
+                            <span className="text-sm text-muted-foreground mt-1 block">
+                                From: {restoreDialog.backup?.connection_name} ({restoreDialog.backup?.connection_host}/{restoreDialog.backup?.connection_database})
+                            </span>
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <div className="py-4">
-                        <label className="text-sm font-medium mb-2 block">
-                            Target Connection
-                        </label>
-                        <Select value={selectedTargetConnectionId} onValueChange={setSelectedTargetConnectionId}>
+                        <label className="text-sm font-medium mb-2 block">Target Connection</label>
+                        <Select
+                            value={restoreDialog.targetConnectionId}
+                            onValueChange={(value) =>
+                                setRestoreDialog((prev) => ({ ...prev, targetConnectionId: value }))
+                            }
+                        >
                             <SelectTrigger>
                                 <SelectValue placeholder="Select a connection" />
                             </SelectTrigger>
                             <SelectContent>
-                                {allConnections.map((conn) => (
+                                {connections.map((conn) => (
                                     <SelectItem key={conn.id} value={conn.id.toString()}>
                                         <div className="flex items-center gap-2">
                                             <Database className="h-4 w-4" />
@@ -433,7 +449,7 @@ export default function Show({ connection, connections: allConnections }: Props)
                         <AlertDialogCancel disabled={restoreDialog.loading}>Cancel</AlertDialogCancel>
                         <AlertDialogAction
                             onClick={handleRestore}
-                            disabled={!selectedTargetConnectionId || restoreDialog.loading}
+                            disabled={!restoreDialog.targetConnectionId || restoreDialog.loading}
                         >
                             {restoreDialog.loading ? 'Starting...' : 'Restore'}
                         </AlertDialogAction>

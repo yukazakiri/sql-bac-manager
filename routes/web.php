@@ -17,12 +17,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::post('connections/test', [\App\Http\Controllers\DatabaseConnectionController::class, 'test'])->name('connections.test');
     Route::resource('connections', \App\Http\Controllers\DatabaseConnectionController::class);
-    
+
+    Route::get('backups', [\App\Http\Controllers\BackupController::class, 'all'])->name('backups.all');
     Route::post('connections/{connection}/backups', [\App\Http\Controllers\BackupController::class, 'store'])->name('backups.store');
     Route::get('connections/{connection}/backups', [\App\Http\Controllers\BackupController::class, 'index'])->name('backups.index');
     Route::get('connections/{connection}/backups/{backup}', [\App\Http\Controllers\BackupController::class, 'download'])->name('backups.download');
     Route::delete('connections/{connection}/backups/{backup}', [\App\Http\Controllers\BackupController::class, 'destroy'])->name('backups.destroy');
     Route::post('connections/{connection}/backups/{backup}/restore', [\App\Http\Controllers\BackupController::class, 'restore'])->name('backups.restore');
+    Route::get('restores/{restore}/status', [\App\Http\Controllers\BackupController::class, 'restoreStatus'])->name('restores.status');
 });
 
 require __DIR__.'/settings.php';

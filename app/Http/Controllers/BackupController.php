@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\DatabaseConnection;
 use App\Services\BackupService;
 use Illuminate\Http\Request;
+use Inertia\Inertia;
 
 class BackupController extends Controller
 {
@@ -36,14 +37,45 @@ class BackupController extends Controller
         return response()->json($backups);
     }
 
+    public function all()
+    {
+        $allBackups = \App\Models\Backup::with('connection')
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($backup) {
+                return [
+                    'id' => $backup->id,
+                    'connection_id' => $backup->connection->id,
+                    'connection_name' => $backup->connection->name,
+                    'connection_host' => $backup->connection->host,
+                    'connection_database' => $backup->connection->database,
+                    'filename' => $backup->filename ?? 'Pending...',
+                    'size' => $backup->size ? $this->formatBytes($backup->size) : null,
+                    'path' => $backup->path,
+                    'status' => $backup->status,
+                    'progress' => $backup->progress ?? 0,
+                    'log' => $backup->log,
+                    'created_at' => $backup->created_at->diffForHumans(),
+                    'download_url' => $backup->status === 'completed' ? route('backups.download', [$backup->connection, $backup->id]) : null,
+                    'delete_url' => route('backups.destroy', [$backup->connection, $backup->id]),
+                    'restore_url' => $backup->status === 'completed' ? route('backups.restore', [$backup->connection, $backup->id]) : null,
+                ];
+            });
+
+        return Inertia::render('Backups/Index', [
+            'backups' => $allBackups,
+            'connections' => DatabaseConnection::all(),
+        ]);
+    }
+
     private function formatBytes($bytes, $precision = 2)
     {
         $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        
+
         for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
             $bytes /= 1024;
         }
-        
+
         return round($bytes, $precision) . ' ' . $units[$i];
     }
 
@@ -58,13 +90,26 @@ class BackupController extends Controller
         return back()->with('success', 'Backup started successfully.');
     }
 
-    public function restore(DatabaseConnection $connection, \App\Models\Backup $backup)
+    public function restore(Request $request, DatabaseConnection $connection, \App\Models\Backup $backup)
     {
+        $request->validate([
+            'target_connection_id' => 'required|exists:database_connections,id',
+        ]);
+
+        $targetConnection = DatabaseConnection::findOrFail($request->target_connection_id);
+
         try {
-            $this->backupService->restore($connection, $backup->filename);
-            return back()->with('success', 'Database restored successfully.');
+            // Create a restore record
+            $restore = $targetConnection->restores()->create([
+                'backup_id' => $backup->id,
+                'status' => 'pending',
+            ]);
+
+            \App\Jobs\PerformRestore::dispatch($restore, $targetConnection, $backup);
+
+            return response()->json(['message' => 'Restore started successfully.', 'restore_id' => $restore->id]);
         } catch (\Exception $e) {
-            return back()->with('error', 'Restore failed: ' . $e->getMessage());
+            return response()->json(['message' => 'Restore failed: ' . $e->getMessage()], 500);
         }
     }
 
@@ -82,9 +127,19 @@ class BackupController extends Controller
         if ($backup->path && file_exists($backup->path)) {
             unlink($backup->path);
         }
-        
+
         $backup->delete();
 
         return back()->with('success', 'Backup deleted successfully.');
+    }
+
+    public function restoreStatus(\App\Models\Restore $restore)
+    {
+        return response()->json([
+            'id' => $restore->id,
+            'status' => $restore->status,
+            'progress' => $restore->progress,
+            'log' => $restore->log,
+        ]);
     }
 }

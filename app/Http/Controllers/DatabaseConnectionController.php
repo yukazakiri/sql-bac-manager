@@ -49,6 +49,7 @@ class DatabaseConnectionController extends Controller
         return Inertia::render('Connections/Show', [
             'connection' => $connection,
             'backups' => $this->backupService->listBackups($connection),
+            'connections' => DatabaseConnection::all(),
         ]);
     }
 

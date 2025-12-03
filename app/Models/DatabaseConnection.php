@@ -26,4 +26,9 @@ class DatabaseConnection extends Model
     {
         return $this->hasMany(Backup::class);
     }
+
+    public function restores()
+    {
+        return $this->hasMany(Restore::class);
+    }
 }

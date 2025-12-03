@@ -118,7 +118,7 @@ class BackupService
 
         // pg_restore is used for custom format dumps
         $fullCommand = sprintf(
-            'pg_restore -h %s -p %s -U %s -d %s -c %s', // -c to clean (drop) database objects before recreating
+            'pg_restore -h %s -p %s -U %s -d %s -c --no-owner %s', // -c to clean, --no-owner to skip ownership changes
             escapeshellarg($connection->host),
             escapeshellarg($connection->port),
             escapeshellarg($connection->username),
