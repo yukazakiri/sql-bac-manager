@@ -18,7 +18,7 @@ import AppLayout from '@/layouts/app-layout';
 import { DatabaseConnection } from '@/types/database-connection';
 import { Head, router } from '@inertiajs/react';
 import axios from 'axios';
-import { Database, Download, RefreshCw, Trash2 } from 'lucide-react';
+import { Database, Download, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -39,11 +39,20 @@ interface Backup {
 interface Props {
     connection: DatabaseConnection;
     connections: DatabaseConnection[];
+    backupDisks: BackupDisk[];
 }
 
-export default function Show({ connection, connections: allConnections }: Props) {
+interface BackupDisk {
+    id: number;
+    name: string;
+    driver: string;
+    is_default: boolean;
+}
+
+export default function Show({ connection, connections: allConnections, backupDisks }: Props) {
     const [backups, setBackups] = useState<Backup[]>([]);
     const [selectedTargetConnectionId, setSelectedTargetConnectionId] = useState<string>('');
+    const [selectedBackupDiskId, setSelectedBackupDiskId] = useState<string>('');
     const [loading, setLoading] = useState(false);
     const prevBackupsRef = useRef<Backup[]>([]);
     const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; backup: Backup | null }>({ open: false, backup: null });
@@ -59,6 +68,12 @@ export default function Show({ connection, connections: allConnections }: Props)
     };
 
     useEffect(() => {
+        // Set default disk
+        const defaultDisk = backupDisks.find(d => d.is_default);
+        if (defaultDisk) {
+            setSelectedBackupDiskId(defaultDisk.id.toString());
+        }
+
         fetchBackups();
 
         // Poll every 1 second for real-time updates
@@ -90,7 +105,9 @@ export default function Show({ connection, connections: allConnections }: Props)
 
     const handleBackup = () => {
         setLoading(true);
-        router.post(`/connections/${connection.id}/backups`, {}, {
+        router.post(`/connections/${connection.id}/backups`, {
+            backup_disk_id: selectedBackupDiskId || undefined,
+        }, {
             onSuccess: () => {
                 toast.success('Backup started in background');
                 fetchBackups();
@@ -236,7 +253,7 @@ export default function Show({ connection, connections: allConnections }: Props)
                 <Card>
                     <CardHeader>
                         <div className="flex items-start justify-between">
-                            <div className="space-y-1">
+                            <div className="space-y-3 flex-1">
                                 <div className="flex items-center gap-2">
                                     <Database className="h-5 w-5 text-muted-foreground" />
                                     <CardTitle className="text-2xl">{connection.name}</CardTitle>
@@ -244,6 +261,28 @@ export default function Show({ connection, connections: allConnections }: Props)
                                 <CardDescription>
                                     {connection.username}@{connection.host}:{connection.port} / {connection.database}
                                 </CardDescription>
+                                {backupDisks.length > 1 && (
+                                    <div className="flex items-center gap-2">
+                                        <HardDrive className="h-4 w-4 text-muted-foreground" />
+                                        <Select value={selectedBackupDiskId} onValueChange={setSelectedBackupDiskId}>
+                                            <SelectTrigger className="w-[250px]">
+                                                <SelectValue placeholder="Select backup disk" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {backupDisks.map((disk) => (
+                                                    <SelectItem key={disk.id} value={disk.id.toString()}>
+                                                        <div className="flex items-center gap-2">
+                                                            <span>{disk.name}</span>
+                                                            <span className="text-sm text-muted-foreground">
+                                                                ({disk.driver}{disk.is_default ? ' - default' : ''})
+                                                            </span>
+                                                        </div>
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                )}
                             </div>
                             <Button onClick={handleBackup} disabled={loading} size="lg">
                                 {loading ? 'Starting...' : 'Create Backup'}

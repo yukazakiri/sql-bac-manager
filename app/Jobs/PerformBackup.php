@@ -35,9 +35,10 @@ class PerformBackup implements ShouldQueue
         try {
             // Update progress to 25% when starting
             $this->backup->update(['progress' => 25]);
-            
-            $result = $backupService->createBackup($this->backup->connection);
-            
+
+            $disk = $this->backup->backupDisk;
+            $result = $backupService->createBackup($this->backup->connection, $disk);
+
             // Update progress to 75% after backup completes
             $this->backup->update(['progress' => 75]);
 
@@ -47,6 +48,7 @@ class PerformBackup implements ShouldQueue
                 'path' => $result['path'],
                 'filename' => $result['filename'],
                 'size' => $result['size'],
+                'backup_disk_id' => $disk?->id,
             ]);
         } catch (\Throwable $e) {
             Log::error('Backup failed: ' . $e->getMessage());

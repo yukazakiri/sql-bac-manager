@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\BackupDisk;
 use App\Models\DatabaseConnection;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\Process\Process;
@@ -9,32 +10,58 @@ use Symfony\Component\Process\Exception\ProcessFailedException;
 
 class BackupService
 {
-    protected $backupDisk = 'local';
     protected $backupPath = 'backups';
 
-    public function createBackup(DatabaseConnection $connection)
+    public function createBackup(DatabaseConnection $connection, ?BackupDisk $disk = null)
     {
+        // Use default disk if none specified
+        if (!$disk) {
+            $diskManager = new BackupDiskManager();
+            $disk = $diskManager->getDefaultDisk();
+        }
+
         $filename = $this->getBackupFilename($connection);
-        $path = Storage::disk($this->backupDisk)->path($this->backupPath . '/' . $filename);
-        
+        $diskInstance = $disk->getDisk();
+
         // Ensure directory exists
-        if (!Storage::disk($this->backupDisk)->exists($this->backupPath)) {
-            Storage::disk($this->backupDisk)->makeDirectory($this->backupPath);
+        if (!$diskInstance->exists($this->backupPath)) {
+            $diskInstance->makeDirectory($this->backupPath);
         }
 
-        if ($connection->driver === 'pgsql') {
-            $this->backupPgsql($connection, $path);
-        } else {
-            $this->backupMysql($connection, $path);
+        // Create temp file for backup
+        $tempPath = tempnam(sys_get_temp_dir(), 'backup_');
+        $finalPath = $this->backupPath . '/' . $filename;
+
+        try {
+            if ($connection->driver === 'pgsql') {
+                $this->backupPgsql($connection, $tempPath);
+            } else {
+                $this->backupMysql($connection, $tempPath);
+            }
+
+            // Upload to disk
+            $diskInstance->put($finalPath, fopen($tempPath, 'r'));
+            $size = $diskInstance->size($finalPath);
+
+            // Get the full path if it's a local disk, otherwise just the storage path
+            if ($disk->driver === 'local') {
+                $fullPath = $diskInstance->path($finalPath);
+            } else {
+                $fullPath = $finalPath;
+            }
+
+            return [
+                'path' => $fullPath,
+                'filename' => $filename,
+                'size' => $size,
+                'disk' => $disk,
+            ];
+        } finally {
+            // Clean up temp file
+            if (file_exists($tempPath)) {
+                unlink($tempPath);
+            }
         }
-
-        $size = Storage::disk($this->backupDisk)->size($this->backupPath . '/' . $filename);
-
-        return [
-            'path' => $path,
-            'filename' => $filename,
-            'size' => $size,
-        ];
     }
 
     protected function backupMysql(DatabaseConnection $connection, string $path)
@@ -75,18 +102,35 @@ class BackupService
         $this->runProcess($fullCommand, $env);
     }
 
-    public function restore(DatabaseConnection $connection, string $filename)
+    public function restore(DatabaseConnection $connection, string $filename, BackupDisk $disk)
     {
-        $path = Storage::disk($this->backupDisk)->path($this->backupPath . '/' . $filename);
+        $diskInstance = $disk->getDisk();
+        $filePath = $this->backupPath . '/' . $filename;
 
-        if (!file_exists($path)) {
+        if (!$diskInstance->exists($filePath)) {
             throw new \Exception("Backup file not found.");
         }
 
-        if ($connection->driver === 'pgsql') {
-            $this->restorePgsql($connection, $path);
-        } else {
-            $this->restoreMysql($connection, $path);
+        // Download to temp file for restoration
+        $tempPath = tempnam(sys_get_temp_dir(), 'restore_');
+
+        try {
+            // Download file from storage
+            $tempStream = fopen($tempPath, 'w');
+            $diskInstance->readStream($filePath);
+            $diskInstance->get($filePath);
+            file_put_contents($tempPath, $diskInstance->get($filePath));
+
+            if ($connection->driver === 'pgsql') {
+                $this->restorePgsql($connection, $tempPath);
+            } else {
+                $this->restoreMysql($connection, $tempPath);
+            }
+        } finally {
+            // Clean up temp file
+            if (file_exists($tempPath)) {
+                unlink($tempPath);
+            }
         }
     }
 
@@ -140,15 +184,18 @@ class BackupService
         }
     }
 
-    public function listBackups(DatabaseConnection $connection)
+    public function listBackups(DatabaseConnection $connection, ?BackupDisk $disk = null)
     {
-        // Filter backups for this connection? 
-        // Or just list all in the folder?
-        // Ideally we prefix filenames with connection ID or name.
-        
-        $files = Storage::disk($this->backupDisk)->files($this->backupPath);
+        // Use default disk if none specified
+        if (!$disk) {
+            $diskManager = new BackupDiskManager();
+            $disk = $diskManager->getDefaultDisk();
+        }
+
+        $diskInstance = $disk->getDisk();
+        $files = $diskInstance->files($this->backupPath);
         $backups = [];
-        
+
         $prefix = $connection->id . '_';
 
         foreach ($files as $file) {
@@ -156,28 +203,32 @@ class BackupService
             if (str_starts_with($basename, $prefix)) {
                 $backups[] = [
                     'filename' => $basename,
-                    'size' => Storage::disk($this->backupDisk)->size($file),
-                    'created_at' => Storage::disk($this->backupDisk)->lastModified($file),
+                    'size' => $diskInstance->size($file),
+                    'created_at' => $diskInstance->lastModified($file),
                 ];
             }
         }
-        
+
         // Sort by created_at desc
         usort($backups, fn($a, $b) => $b['created_at'] <=> $a['created_at']);
 
         return $backups;
     }
-    
-    public function deleteBackup(string $filename)
+
+    public function deleteBackup(string $filename, BackupDisk $disk)
     {
-        if (Storage::disk($this->backupDisk)->exists($this->backupPath . '/' . $filename)) {
-            Storage::disk($this->backupDisk)->delete($this->backupPath . '/' . $filename);
+        $diskInstance = $disk->getDisk();
+        $filePath = $this->backupPath . '/' . $filename;
+
+        if ($diskInstance->exists($filePath)) {
+            $diskInstance->delete($filePath);
         }
     }
-    
-    public function getBackupPath(string $filename)
+
+    public function getBackupPath(string $filename, BackupDisk $disk)
     {
-        return Storage::disk($this->backupDisk)->path($this->backupPath . '/' . $filename);
+        $diskInstance = $disk->getDisk();
+        return $diskInstance->path($this->backupPath . '/' . $filename);
     }
 
     protected function getBackupFilename(DatabaseConnection $connection)

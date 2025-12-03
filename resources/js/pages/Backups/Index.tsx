@@ -19,7 +19,7 @@ import AppLayout from '@/layouts/app-layout';
 import { DatabaseConnection } from '@/types/database-connection';
 import { Head, router } from '@inertiajs/react';
 import axios from 'axios';
-import { Database, Download, Filter, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { Database, Download, Filter, HardDrive, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -44,9 +44,17 @@ interface Backup {
 interface Props {
     backups: Backup[];
     connections: DatabaseConnection[];
+    backupDisks: BackupDisk[];
 }
 
-export default function Index({ backups: initialBackups, connections }: Props) {
+interface BackupDisk {
+    id: number;
+    name: string;
+    driver: string;
+    is_default: boolean;
+}
+
+export default function Index({ backups: initialBackups, connections, backupDisks }: Props) {
     const [backups, setBackups] = useState<Backup[]>(initialBackups);
     const [searchQuery, setSearchQuery] = useState('');
     const [connectionFilter, setConnectionFilter] = useState<string>('all');

@@ -18,9 +18,11 @@ class BackupController extends Controller
 
     public function index(DatabaseConnection $connection)
     {
-        $backups = $connection->backups()->orderBy('created_at', 'desc')->get()->map(function ($backup) use ($connection) {
+        $backups = $connection->backups()->with('backupDisk')->orderBy('created_at', 'desc')->get()->map(function ($backup) use ($connection) {
             return [
                 'id' => $backup->id,
+                'backup_disk_id' => $backup->backup_disk_id,
+                'backup_disk_name' => $backup->backupDisk?->name,
                 'filename' => $backup->filename ?? 'Pending...',
                 'size' => $backup->size ? $this->formatBytes($backup->size) : null,
                 'path' => $backup->path,
@@ -39,7 +41,7 @@ class BackupController extends Controller
 
     public function all()
     {
-        $allBackups = \App\Models\Backup::with('connection')
+        $allBackups = \App\Models\Backup::with('connection', 'backupDisk')
             ->orderBy('created_at', 'desc')
             ->get()
             ->map(function ($backup) {
@@ -49,6 +51,8 @@ class BackupController extends Controller
                     'connection_name' => $backup->connection->name,
                     'connection_host' => $backup->connection->host,
                     'connection_database' => $backup->connection->database,
+                    'backup_disk_id' => $backup->backup_disk_id,
+                    'backup_disk_name' => $backup->backupDisk?->name,
                     'filename' => $backup->filename ?? 'Pending...',
                     'size' => $backup->size ? $this->formatBytes($backup->size) : null,
                     'path' => $backup->path,
@@ -65,6 +69,7 @@ class BackupController extends Controller
         return Inertia::render('Backups/Index', [
             'backups' => $allBackups,
             'connections' => DatabaseConnection::all(),
+            'backupDisks' => \App\Models\BackupDisk::where('is_active', true)->get(),
         ]);
     }
 
@@ -81,8 +86,15 @@ class BackupController extends Controller
 
     public function store(Request $request, DatabaseConnection $connection)
     {
+        $request->validate([
+            'backup_disk_id' => 'nullable|exists:backup_disks,id',
+        ]);
+
+        $diskId = $request->input('backup_disk_id');
+
         $backup = $connection->backups()->create([
             'status' => 'pending',
+            'backup_disk_id' => $diskId,
         ]);
 
         \App\Jobs\PerformBackup::dispatch($backup);

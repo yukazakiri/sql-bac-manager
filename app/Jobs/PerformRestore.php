@@ -42,7 +42,12 @@ class PerformRestore implements ShouldQueue
             // Update progress to 25% when starting
             $this->restore->update(['progress' => 25]);
 
-            $backupService->restore($this->targetConnection, $this->backup->filename);
+            $disk = $this->backup->backupDisk;
+            if (!$disk) {
+                throw new \Exception('Backup disk not found');
+            }
+
+            $backupService->restore($this->targetConnection, $this->backup->filename, $disk);
 
             // Update progress to 75% after restore completes
             $this->restore->update(['progress' => 75]);

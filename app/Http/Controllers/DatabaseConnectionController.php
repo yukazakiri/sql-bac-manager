@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\DatabaseConnection;
+use App\Models\BackupDisk;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -50,6 +51,7 @@ class DatabaseConnectionController extends Controller
             'connection' => $connection,
             'backups' => $this->backupService->listBackups($connection),
             'connections' => DatabaseConnection::all(),
+            'backupDisks' => BackupDisk::where('is_active', true)->get(),
         ]);
     }
 
