@@ -37,7 +37,8 @@ class PerformBackup implements ShouldQueue
             $this->backup->update(['progress' => 25]);
 
             $disk = $this->backup->backupDisk;
-            $result = $backupService->createBackup($this->backup->connection, $disk);
+            $backupType = $this->backup->backup_type ?? 'full';
+            $result = $backupService->createBackup($this->backup->connection, $disk, $backupType);
 
             // Update progress to 75% after backup completes
             $this->backup->update(['progress' => 75]);

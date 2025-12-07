@@ -12,7 +12,7 @@ class BackupService
 {
     protected $backupPath = 'backups';
 
-    public function createBackup(DatabaseConnection $connection, ?BackupDisk $disk = null)
+    public function createBackup(DatabaseConnection $connection, ?BackupDisk $disk = null, string $backupType = 'full')
     {
         // Use default disk if none specified
         if (!$disk) {
@@ -20,7 +20,7 @@ class BackupService
             $disk = $diskManager->getDefaultDisk();
         }
 
-        $filename = $this->getBackupFilename($connection);
+        $filename = $this->getBackupFilename($connection, $backupType);
         $diskInstance = $disk->getDisk();
 
         // Ensure directory exists
@@ -34,9 +34,9 @@ class BackupService
 
         try {
             if ($connection->driver === 'pgsql') {
-                $this->backupPgsql($connection, $tempPath);
+                $this->backupPgsql($connection, $tempPath, $backupType);
             } else {
-                $this->backupMysql($connection, $tempPath);
+                $this->backupMysql($connection, $tempPath, $backupType);
             }
 
             // Upload to disk
@@ -64,18 +64,36 @@ class BackupService
         }
     }
 
-    protected function backupMysql(DatabaseConnection $connection, string $path)
+    protected function backupMysql(DatabaseConnection $connection, string $path, string $backupType = 'full')
     {
         $env = null;
         if ($connection->password) {
             $env = ['MYSQL_PWD' => $connection->password];
         }
 
+        $options = '';
+        switch ($backupType) {
+            case 'structure':
+                $options = '--no-data';
+                break;
+            case 'data':
+                $options = '--no-create-info';
+                break;
+            case 'public_schema':
+                // MySQL doesn't have schemas like PostgreSQL, so this acts like full backup
+                $options = '';
+                break;
+            default: // full
+                $options = '';
+                break;
+        }
+
         $fullCommand = sprintf(
-            'mysqldump -h %s -P %s -u %s %s > %s',
+            'mysqldump -h %s -P %s -u %s %s %s > %s',
             escapeshellarg($connection->host),
             escapeshellarg($connection->port),
             escapeshellarg($connection->username),
+            $options,
             escapeshellarg($connection->database),
             escapeshellarg($path)
         );
@@ -83,19 +101,35 @@ class BackupService
         $this->runProcess($fullCommand, $env);
     }
 
-    protected function backupPgsql(DatabaseConnection $connection, string $path)
+    protected function backupPgsql(DatabaseConnection $connection, string $path, string $backupType = 'full')
     {
         $env = null;
         if ($connection->password) {
             $env = ['PGPASSWORD' => $connection->password];
         }
 
+        $options = '-F c'; // custom format (compressed)
+        switch ($backupType) {
+            case 'structure':
+                $options .= ' --schema-only';
+                break;
+            case 'data':
+                $options .= ' --data-only';
+                break;
+            case 'public_schema':
+                $options .= ' --schema=public';
+                break;
+            default: // full
+                break;
+        }
+
         $fullCommand = sprintf(
-            'pg_dump -h %s -p %s -U %s -d %s -F c -f %s', // -F c for custom format (compressed)
+            'pg_dump -h %s -p %s -U %s -d %s %s -f %s',
             escapeshellarg($connection->host),
             escapeshellarg($connection->port),
             escapeshellarg($connection->username),
             escapeshellarg($connection->database),
+            $options,
             escapeshellarg($path)
         );
 
@@ -231,12 +265,13 @@ class BackupService
         return $diskInstance->path($this->backupPath . '/' . $filename);
     }
 
-    protected function getBackupFilename(DatabaseConnection $connection)
+    protected function getBackupFilename(DatabaseConnection $connection, string $backupType = 'full')
     {
         return sprintf(
-            '%d_%s_%s.sql',
+            '%d_%s_%s_%s.sql',
             $connection->id,
             $connection->database,
+            $backupType,
             date('Y-m-d_H-i-s')
         );
     }

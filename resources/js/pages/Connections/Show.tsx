@@ -53,10 +53,18 @@ export default function Show({ connection, connections: allConnections, backupDi
     const [backups, setBackups] = useState<Backup[]>([]);
     const [selectedTargetConnectionId, setSelectedTargetConnectionId] = useState<string>('');
     const [selectedBackupDiskId, setSelectedBackupDiskId] = useState<string>('');
+    const [selectedBackupType, setSelectedBackupType] = useState<string>('full');
     const [loading, setLoading] = useState(false);
     const prevBackupsRef = useRef<Backup[]>([]);
     const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; backup: Backup | null }>({ open: false, backup: null });
     const [restoreDialog, setRestoreDialog] = useState<{ open: boolean; backup: Backup | null; loading: boolean }>({ open: false, backup: null, loading: false });
+
+    const backupTypes = [
+        { value: 'full', label: 'Full (Structure + Data)' },
+        { value: 'structure', label: 'Structure Only' },
+        { value: 'data', label: 'Data Only' },
+        { value: 'public_schema', label: 'Public Schema Only' },
+    ];
 
     const fetchBackups = async () => {
         try {
@@ -107,6 +115,7 @@ export default function Show({ connection, connections: allConnections, backupDi
         setLoading(true);
         router.post(`/connections/${connection.id}/backups`, {
             backup_disk_id: selectedBackupDiskId || undefined,
+            backup_type: selectedBackupType,
         }, {
             onSuccess: () => {
                 toast.success('Backup started in background');
@@ -283,6 +292,21 @@ export default function Show({ connection, connections: allConnections, backupDi
                                         </Select>
                                     </div>
                                 )}
+                                <div className="flex items-center gap-2">
+                                    <Database className="h-4 w-4 text-muted-foreground" />
+                                    <Select value={selectedBackupType} onValueChange={setSelectedBackupType}>
+                                        <SelectTrigger className="w-[250px]">
+                                            <SelectValue placeholder="Select backup type" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {backupTypes.map((type) => (
+                                                <SelectItem key={type.value} value={type.value}>
+                                                    {type.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
                             <Button onClick={handleBackup} disabled={loading} size="lg">
                                 {loading ? 'Starting...' : 'Create Backup'}

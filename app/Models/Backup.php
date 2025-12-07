@@ -12,6 +12,7 @@ class Backup extends Model
     protected $fillable = [
         'database_connection_id',
         'backup_disk_id',
+        'backup_type',
         'status',
         'progress',
         'path',
@@ -19,6 +20,21 @@ class Backup extends Model
         'size',
         'log',
     ];
+
+    const TYPE_FULL = 'full';
+    const TYPE_STRUCTURE = 'structure';
+    const TYPE_DATA = 'data';
+    const TYPE_PUBLIC_SCHEMA = 'public_schema';
+
+    public static function getBackupTypes(): array
+    {
+        return [
+            self::TYPE_FULL => 'Full (Structure + Data)',
+            self::TYPE_STRUCTURE => 'Structure Only',
+            self::TYPE_DATA => 'Data Only',
+            self::TYPE_PUBLIC_SCHEMA => 'Public Schema Only',
+        ];
+    }
 
     public function connection()
     {

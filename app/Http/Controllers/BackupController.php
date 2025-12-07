@@ -88,13 +88,16 @@ class BackupController extends Controller
     {
         $request->validate([
             'backup_disk_id' => 'nullable|exists:backup_disks,id',
+            'backup_type' => 'nullable|string|in:full,structure,data,public_schema',
         ]);
 
         $diskId = $request->input('backup_disk_id');
+        $backupType = $request->input('backup_type', 'full');
 
         $backup = $connection->backups()->create([
             'status' => 'pending',
             'backup_disk_id' => $diskId,
+            'backup_type' => $backupType,
         ]);
 
         \App\Jobs\PerformBackup::dispatch($backup);
