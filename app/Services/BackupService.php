@@ -20,6 +20,11 @@ class BackupService
             $disk = $diskManager->getDefaultDisk();
         }
 
+        // Throw exception if no disk is available
+        if (!$disk) {
+            throw new \Exception('No backup disk configured. Please configure a backup disk first.');
+        }
+
         $filename = $this->getBackupFilename($connection, $backupType);
         $diskInstance = $disk->getDisk();
 
@@ -224,6 +229,11 @@ class BackupService
         if (!$disk) {
             $diskManager = new BackupDiskManager();
             $disk = $diskManager->getDefaultDisk();
+        }
+
+        // Return empty array if no disk is available
+        if (!$disk) {
+            return [];
         }
 
         $diskInstance = $disk->getDisk();
