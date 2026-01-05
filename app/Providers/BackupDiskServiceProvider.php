@@ -20,8 +20,12 @@ class BackupDiskServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Load backup disks on application boot
-        $diskManager = new BackupDiskManager();
-        $diskManager->loadDisks();
+        try {
+            // Load backup disks on application boot
+            $diskManager = new BackupDiskManager();
+            $diskManager->loadDisks();
+        } catch (\Exception $e) {
+            // Fail silently if table doesn't exist (e.g. during fresh migration or tests)
+        }
     }
 }

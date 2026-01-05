@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Settings\BackupDiskController;
 use App\Http\Controllers\Settings\PasswordController;
 use App\Http\Controllers\Settings\ProfileController;
 use App\Http\Controllers\Settings\TwoFactorAuthenticationController;
@@ -25,4 +26,9 @@ Route::middleware('auth')->group(function () {
 
     Route::get('settings/two-factor', [TwoFactorAuthenticationController::class, 'show'])
         ->name('two-factor.show');
+
+    Route::get('settings/backup-disks', [BackupDiskController::class, 'index'])->name('backup-disks.index');
+    Route::post('settings/backup-disks', [BackupDiskController::class, 'store'])->name('backup-disks.store');
+    Route::put('settings/backup-disks/{backupDisk}', [BackupDiskController::class, 'update'])->name('backup-disks.update');
+    Route::delete('settings/backup-disks/{backupDisk}', [BackupDiskController::class, 'destroy'])->name('backup-disks.destroy');
 });
