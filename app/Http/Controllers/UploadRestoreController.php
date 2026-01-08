@@ -6,6 +6,7 @@ use App\Models\DatabaseConnection;
 use App\Services\BackupService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Inertia\Inertia;
@@ -37,40 +38,74 @@ class UploadRestoreController extends Controller
 
     public function uploadAndRestore(Request $request)
     {
+        \Log::info('Upload request received', [
+            'has_file' => $request->hasFile('backup_file'),
+            'all_files' => $request->allFiles(),
+            'all_input' => $request->except('backup_file'),
+        ]);
+
         $validator = Validator::make($request->all(), [
-            'backup_file' => 'required|file|mimes:sql,dump,bz2,gz',
+            'backup_file' => 'required|file',
             'target_connection_id' => 'required|exists:database_connections,id',
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'errors' => $validator->errors(),
-            ], 422);
+            \Log::error('Validation failed', ['errors' => $validator->errors()]);
+            return redirect()->back()->withErrors($validator->errors());
         }
 
         $file = $request->file('backup_file');
+        
+        if (!$file) {
+            \Log::error('No file found in request');
+            return redirect()->back()->withErrors(['backup_file' => 'No file uploaded']);
+        }
+        
+        \Log::info('File received', [
+            'original_name' => $file->getClientOriginalName(),
+            'size' => $file->getSize(),
+            'mime' => $file->getMimeType(),
+        ]);
+        
         $targetConnection = DatabaseConnection::findOrFail($request->target_connection_id);
 
-        // Store uploaded file temporarily
-        $tempPath = $file->storeAs('temp/restore', $file->getClientOriginalName(), 'local');
-
         try {
-            // Start the restore process
-            $restoreJob = new \App\Jobs\PerformRestoreFromFile($targetConnection, storage_path('app/' . $tempPath));
-            dispatch($restoreJob);
-
-            return response()->json([
-                'success' => true,
-                'restore_id' => $restoreJob->getRestoreId(),
+            // Store uploaded file temporarily
+            $tempPath = $file->storeAs('temp/restore', $file->getClientOriginalName(), 'local');
+            $fullPath = Storage::disk('local')->path($tempPath);
+            
+            \Log::info('File stored', [
+                'temp_path' => $tempPath,
+                'full_path' => $fullPath,
+                'exists' => file_exists($fullPath),
             ]);
+
+            if (!file_exists($fullPath)) {
+                throw new \Exception("File was not stored properly at: {$fullPath}");
+            }
+
+            // Start the restore process synchronously
+            $restoreJob = new \App\Jobs\PerformRestoreFromFile($targetConnection, $fullPath);
+            $restoreId = $restoreJob->getRestoreId();
+            
+            // Dispatch synchronously so the file exists when job runs
+            dispatch_sync($restoreJob);
+            
+            \Log::info('Job dispatched synchronously', ['restore_id' => $restoreId]);
+
+            return redirect()->route('upload-restore.output-page', ['restoreId' => $restoreId]);
         } catch (\Exception $e) {
-            // Clean up uploaded file if restore failed to start
-            Storage::disk('local')->delete($tempPath);
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to start restore: ' . $e->getMessage(),
-            ], 500);
+            \Log::error('Upload failed', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            // Clean up uploaded file if it was stored
+            if (isset($tempPath)) {
+                Storage::disk('local')->delete($tempPath);
+            }
+            
+            return redirect()->back()->withErrors(['error' => 'Failed to start restore: ' . $e->getMessage()]);
         }
     }
 

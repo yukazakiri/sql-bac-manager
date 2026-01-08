@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\DatabaseConnection;
 use App\Models\BackupDisk;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
+use Symfony\Component\Process\Process;
 
 class DatabaseConnectionController extends Controller
 {
@@ -30,15 +32,76 @@ class DatabaseConnectionController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
+        $rules = [
             'name' => 'required|string|max:255',
-            'host' => 'required|string|max:255',
-            'port' => 'required|string|max:10',
-            'username' => 'required|string|max:255',
+            'driver' => 'required|string|in:mysql,pgsql,sqlite',
+            'database' => 'nullable|string|max:255',
             'password' => 'nullable|string',
-            'database' => 'required|string|max:255',
-            'driver' => 'required|string|in:mysql,pgsql',
-        ]);
+            'file' => 'nullable|file',
+        ];
+
+        if ($request->input('driver') !== 'sqlite') {
+            $rules['host'] = 'required|string|max:255';
+            $rules['port'] = 'required|string|max:10';
+            $rules['username'] = 'required|string|max:255';
+            $rules['database'] = 'required|string|max:255';
+        } else {
+            $rules['host'] = 'nullable|string|max:255';
+            $rules['port'] = 'nullable|string|max:10';
+            $rules['username'] = 'nullable|string|max:255';
+        }
+
+        $validated = $request->validate($rules);
+
+        if ($request->input('driver') === 'sqlite' && $request->hasFile('file')) {
+            $file = $request->file('file');
+            $extension = $file->getClientOriginalExtension();
+
+            if (strtolower($extension) === 'sql') {
+                // Handle SQL dump import
+                $sqlPath = $file->storeAs('connections', uniqid('import_') . '.sql', 'local');
+                $fullSqlPath = Storage::disk('local')->path($sqlPath);
+
+                $dbFilename = uniqid('sqlite_') . '.sqlite';
+                $dbPathRelative = 'connections/' . $dbFilename;
+                $fullDbPath = Storage::disk('local')->path($dbPathRelative);
+
+                // Ensure directory exists
+                Storage::disk('local')->makeDirectory('connections');
+
+                // Run import: sqlite3 db.sqlite < dump.sql
+                $command = sprintf('sqlite3 %s < %s', escapeshellarg($fullDbPath), escapeshellarg($fullSqlPath));
+
+                $process = Process::fromShellCommandline($command);
+                $process->setTimeout(300);
+                $process->run();
+
+                // Cleanup SQL file
+                Storage::disk('local')->delete($sqlPath);
+
+                if (!$process->isSuccessful()) {
+                    if (file_exists($fullDbPath)) {
+                        unlink($fullDbPath);
+                    }
+                    return back()->withErrors(['file' => 'Failed to import SQL file: ' . $process->getErrorOutput()]);
+                }
+
+                $validated['database'] = $fullDbPath;
+            } else {
+                // Handle binary SQLite file
+                $path = $file->storeAs(
+                    'connections',
+                    uniqid('sqlite_') . '.' . $extension,
+                    'local'
+                );
+                $fullPath = Storage::disk('local')->path($path);
+                $validated['database'] = $fullPath;
+            }
+        }
+
+        if (empty($validated['database']) && $request->input('driver') === 'sqlite') {
+             return back()->withErrors(['database' => 'Database path or file upload is required for SQLite.']);
+        }
 
         DatabaseConnection::create($validated);
 
@@ -64,15 +127,24 @@ class DatabaseConnectionController extends Controller
 
     public function update(Request $request, DatabaseConnection $connection)
     {
-        $validated = $request->validate([
+        $rules = [
             'name' => 'required|string|max:255',
-            'host' => 'required|string|max:255',
-            'port' => 'required|string|max:10',
-            'username' => 'required|string|max:255',
-            'password' => 'nullable|string',
+            'driver' => 'required|string|in:mysql,pgsql,sqlite',
             'database' => 'required|string|max:255',
-            'driver' => 'required|string|in:mysql,pgsql',
-        ]);
+            'password' => 'nullable|string',
+        ];
+
+        if ($request->input('driver') !== 'sqlite') {
+            $rules['host'] = 'required|string|max:255';
+            $rules['port'] = 'required|string|max:10';
+            $rules['username'] = 'required|string|max:255';
+        } else {
+            $rules['host'] = 'nullable|string|max:255';
+            $rules['port'] = 'nullable|string|max:10';
+            $rules['username'] = 'nullable|string|max:255';
+        }
+
+        $validated = $request->validate($rules);
 
         $connection->update($validated);
 
@@ -88,34 +160,46 @@ class DatabaseConnectionController extends Controller
 
     public function test(Request $request)
     {
-        $validated = $request->validate([
-            'host' => 'required|string|max:255',
-            'port' => 'required|string|max:10',
-            'username' => 'required|string|max:255',
-            'password' => 'nullable|string',
+        $rules = [
+            'driver' => 'required|string|in:mysql,pgsql,sqlite',
             'database' => 'required|string|max:255',
-            'driver' => 'required|string|in:mysql,pgsql',
-        ]);
+            'password' => 'nullable|string',
+        ];
+
+        if ($request->input('driver') !== 'sqlite') {
+            $rules['host'] = 'required|string|max:255';
+            $rules['port'] = 'required|string|max:10';
+            $rules['username'] = 'required|string|max:255';
+        } else {
+            $rules['host'] = 'nullable|string|max:255';
+            $rules['port'] = 'nullable|string|max:10';
+            $rules['username'] = 'nullable|string|max:255';
+        }
+
+        $validated = $request->validate($rules);
 
         try {
             // Configure a temporary connection
             $config = [
                 'driver' => $validated['driver'],
-                'host' => $validated['host'],
-                'port' => $validated['port'],
                 'database' => $validated['database'],
-                'username' => $validated['username'],
                 'password' => $validated['password'],
-                'charset' => 'utf8mb4',
-                'collation' => 'utf8mb4_unicode_ci',
                 'prefix' => '',
-                'strict' => true,
-                'engine' => null,
+                'foreign_key_constraints' => true,
             ];
+
+            if ($validated['driver'] !== 'sqlite') {
+                $config['host'] = $validated['host'];
+                $config['port'] = $validated['port'];
+                $config['username'] = $validated['username'];
+                $config['charset'] = 'utf8mb4';
+                $config['collation'] = 'utf8mb4_unicode_ci';
+                $config['strict'] = true;
+                $config['engine'] = null;
+            }
 
             if ($validated['driver'] === 'pgsql') {
                 $config['charset'] = 'utf8';
-                $config['prefix'] = '';
                 $config['schema'] = 'public';
                 $config['sslmode'] = 'prefer';
             }

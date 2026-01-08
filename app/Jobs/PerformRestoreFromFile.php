@@ -3,20 +3,16 @@
 namespace App\Jobs;
 
 use App\Models\DatabaseConnection;
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Process\Process;
 
-class PerformRestoreFromFile implements ShouldQueue
+class PerformRestoreFromFile
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable;
 
-    protected $connection;
+    protected $databaseConnection;
     protected $filePath;
     protected $restoreId;
 
@@ -25,7 +21,7 @@ class PerformRestoreFromFile implements ShouldQueue
      */
     public function __construct(DatabaseConnection $connection, string $filePath)
     {
-        $this->connection = $connection;
+        $this->databaseConnection = $connection;
         $this->filePath = $filePath;
         $this->restoreId = uniqid('restore_', true);
     }
@@ -36,9 +32,9 @@ class PerformRestoreFromFile implements ShouldQueue
     public function handle(): void
     {
         $this->writeOutput("Starting restore process...\n");
-        $this->writeOutput("Target Database: {$this->connection->database}\n");
-        $this->writeOutput("Driver: {$this->connection->driver}\n");
-        $this->writeOutput("Host: {$this->connection->host}\n");
+        $this->writeOutput("Target Database: {$this->databaseConnection->database}\n");
+        $this->writeOutput("Driver: {$this->databaseConnection->driver}\n");
+        $this->writeOutput("Host: {$this->databaseConnection->host}\n");
         $this->writeOutput("File: {$this->filePath}\n");
         $this->writeOutput(str_repeat('-', 50) . "\n\n");
 
@@ -53,7 +49,7 @@ class PerformRestoreFromFile implements ShouldQueue
 
             $this->updateProgress(20, "Connecting to database...");
 
-            if ($this->connection->driver === 'pgsql') {
+            if ($this->databaseConnection->driver === 'pgsql') {
                 $this->restorePgsql();
             } else {
                 $this->restoreMysql();
@@ -75,18 +71,18 @@ class PerformRestoreFromFile implements ShouldQueue
     protected function restoreMysql()
     {
         $env = null;
-        if ($this->connection->password) {
-            $env = ['MYSQL_PWD' => $this->connection->password];
+        if ($this->databaseConnection->password) {
+            $env = ['MYSQL_PWD' => $this->databaseConnection->password];
         }
 
         $this->writeOutput("Restoring MySQL database...\n");
 
         $fullCommand = sprintf(
             'mysql -h %s -P %s -u %s %s < %s 2>&1',
-            escapeshellarg($this->connection->host),
-            escapeshellarg($this->connection->port),
-            escapeshellarg($this->connection->username),
-            escapeshellarg($this->connection->database),
+            escapeshellarg($this->databaseConnection->host),
+            escapeshellarg($this->databaseConnection->port),
+            escapeshellarg($this->databaseConnection->username),
+            escapeshellarg($this->databaseConnection->database),
             escapeshellarg($this->filePath)
         );
 
@@ -99,28 +95,28 @@ class PerformRestoreFromFile implements ShouldQueue
     protected function restorePgsql()
     {
         $env = null;
-        if ($this->connection->password) {
-            $env = ['PGPASSWORD' => $this->connection->password];
+        if ($this->databaseConnection->password) {
+            $env = ['PGPASSWORD' => $this->databaseConnection->password];
         }
 
         $this->writeOutput("Restoring PostgreSQL database...\n");
 
         $fullCommand = sprintf(
             'pg_restore -h %s -p %s -U %s -d %s -c --no-owner %s 2>&1',
-            escapeshellarg($this->connection->host),
-            escapeshellarg($this->connection->port),
-            escapeshellarg($this->connection->username),
-            escapeshellarg($this->connection->database),
+            escapeshellarg($this->databaseConnection->host),
+            escapeshellarg($this->databaseConnection->port),
+            escapeshellarg($this->databaseConnection->username),
+            escapeshellarg($this->databaseConnection->database),
             escapeshellarg($this->filePath)
         );
 
         $this->writeOutput("Executing: $fullCommand\n\n");
         $this->updateProgress(30, "Running PostgreSQL restore...");
 
-        $this->runProcess($fullCommand, $env);
+        $this->runProcess($fullCommand, $env, [0, 1]);
     }
 
-    protected function runProcess(string $command, ?array $env = null)
+    protected function runProcess(string $command, ?array $env = null, array $allowedExitCodes = [0])
     {
         $process = Process::fromShellCommandline($command, null, $env);
         $process->setTimeout(600); // 10 minutes timeout
@@ -132,8 +128,8 @@ class PerformRestoreFromFile implements ShouldQueue
             }
         });
 
-        if (!$process->isSuccessful()) {
-            throw new \Exception("Restore failed: " . $process->getErrorOutput());
+        if (!in_array($process->getExitCode(), $allowedExitCodes)) {
+            throw new \Exception("Restore failed with exit code {$process->getExitCode()}");
         }
 
         $this->updateProgress(80, "Restore command completed");

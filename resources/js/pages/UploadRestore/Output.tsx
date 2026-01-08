@@ -1,10 +1,16 @@
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from '@/components/ui/card';
 import AppLayout from '@/layouts/app-layout';
 import { Head, router } from '@inertiajs/react';
+import { ArrowLeft, Copy, Terminal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Terminal, Copy, ArrowLeft } from 'lucide-react';
 
 interface Props {
     restoreId: string;
@@ -40,20 +46,20 @@ export default function Output({ restoreId }: Props) {
         // Poll for status and output
         const statusInterval = setInterval(() => {
             fetch(`/upload-restore/${restoreId}/status`)
-                .then(res => res.json())
-                .then(data => {
+                .then((res) => res.json())
+                .then((data) => {
                     setStatus(data);
                 })
-                .catch(err => console.error('Failed to fetch status:', err));
+                .catch((err) => console.error('Failed to fetch status:', err));
         }, 1000);
 
         const outputInterval = setInterval(() => {
             fetch(`/upload-restore/${restoreId}/output-data`)
-                .then(res => res.json())
-                .then(data => {
+                .then((res) => res.json())
+                .then((data) => {
                     setOutput(data.output);
                 })
-                .catch(err => console.error('Failed to fetch output:', err));
+                .catch((err) => console.error('Failed to fetch output:', err));
         }, 500);
 
         // Clear intervals when done
@@ -75,12 +81,15 @@ export default function Output({ restoreId }: Props) {
         <AppLayout
             breadcrumbs={[
                 { title: 'Upload & Restore', href: '/upload-restore' },
-                { title: 'Output', href: `/upload-restore/${restoreId}/output` },
+                {
+                    title: 'Output',
+                    href: `/upload-restore/${restoreId}/output`,
+                },
             ]}
         >
             <Head title="Restore Output" />
 
-            <div className="p-6 max-w-6xl mx-auto space-y-6">
+            <div className="mx-auto max-w-6xl space-y-6 p-6">
                 <Card>
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
@@ -88,35 +97,48 @@ export default function Output({ restoreId }: Props) {
                             Restore Terminal Output
                         </CardTitle>
                         <CardDescription>
-                            Real-time output from the restore process (ID: {restoreId})
+                            Real-time output from the restore process (ID:{' '}
+                            {restoreId})
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         {status && (
                             <div className="space-y-2">
                                 <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium">Status:</span>
-                                    <span className={`text-sm font-semibold ${
-                                        status.status === 'completed' ? 'text-green-600' :
-                                        status.status === 'failed' ? 'text-red-600' :
-                                        'text-blue-600'
-                                    }`}>
+                                    <span className="text-sm font-medium">
+                                        Status:
+                                    </span>
+                                    <span
+                                        className={`text-sm font-semibold ${
+                                            status.status === 'completed'
+                                                ? 'text-green-600'
+                                                : status.status === 'failed'
+                                                  ? 'text-red-600'
+                                                  : 'text-blue-600'
+                                        }`}
+                                    >
                                         {status.status}
                                     </span>
                                 </div>
                                 <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium">Progress:</span>
-                                    <span className="text-sm font-semibold">{status.progress}%</span>
+                                    <span className="text-sm font-medium">
+                                        Progress:
+                                    </span>
+                                    <span className="text-sm font-semibold">
+                                        {status.progress}%
+                                    </span>
                                 </div>
-                                <div className="w-full bg-gray-200 rounded-full h-2">
+                                <div className="h-2 w-full rounded-full bg-gray-200">
                                     <div
-                                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                        className="h-2 rounded-full bg-blue-600 transition-all duration-300"
                                         style={{ width: `${status.progress}%` }}
                                     />
                                 </div>
                                 {status.log && (
-                                    <div className="bg-red-50 border border-red-200 rounded p-2">
-                                        <p className="text-sm text-red-700 font-mono">{status.log}</p>
+                                    <div className="rounded border border-red-200 bg-red-50 p-2">
+                                        <p className="font-mono text-sm text-red-700">
+                                            {status.log}
+                                        </p>
                                     </div>
                                 )}
                             </div>
@@ -124,14 +146,17 @@ export default function Output({ restoreId }: Props) {
 
                         <div
                             ref={outputRef}
-                            className="bg-black text-green-400 font-mono text-sm p-4 rounded-lg h-96 overflow-y-auto whitespace-pre-wrap"
+                            className="h-96 overflow-y-auto rounded-lg bg-black p-4 font-mono text-sm whitespace-pre-wrap text-green-400"
                         >
                             {output || 'Waiting for output...'}
                         </div>
 
                         <div className="flex gap-2">
-                            <Button onClick={handleBackToUpload} variant="outline">
-                                <ArrowLeft className="h-4 w-4 mr-2" />
+                            <Button
+                                onClick={handleBackToUpload}
+                                variant="outline"
+                            >
+                                <ArrowLeft className="mr-2 h-4 w-4" />
                                 Back to Upload
                             </Button>
                             <Button
@@ -140,7 +165,7 @@ export default function Output({ restoreId }: Props) {
                                     toast.success('Output copied to clipboard');
                                 }}
                             >
-                                <Copy className="h-4 w-4 mr-2" />
+                                <Copy className="mr-2 h-4 w-4" />
                                 Copy Output
                             </Button>
                             <Button onClick={handleNewRestore}>

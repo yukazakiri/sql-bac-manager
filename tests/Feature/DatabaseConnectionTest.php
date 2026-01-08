@@ -42,6 +42,85 @@ class DatabaseConnectionTest extends TestCase
         ]);
     }
 
+    public function test_user_can_create_sqlite_connection()
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->post('/connections', [
+            'name' => 'SQLite DB',
+            'database' => '/path/to/db.sqlite',
+            'driver' => 'sqlite',
+        ]);
+
+        $response->assertRedirect('/connections');
+        $this->assertDatabaseHas('database_connections', [
+            'name' => 'SQLite DB',
+            'database' => '/path/to/db.sqlite',
+            'driver' => 'sqlite',
+            'host' => null,
+            'port' => null,
+            'username' => null,
+        ]);
+    }
+
+    public function test_user_can_create_sqlite_connection_via_file_upload()
+    {
+        $user = User::factory()->create();
+        $file = \Illuminate\Http\UploadedFile::fake()->create('test.sqlite', 100);
+
+        $response = $this->actingAs($user)->post('/connections', [
+            'name' => 'Uploaded SQLite',
+            'driver' => 'sqlite',
+            'file' => $file,
+        ]);
+
+        $response->assertRedirect('/connections');
+        
+        $connection = DatabaseConnection::where('name', 'Uploaded SQLite')->first();
+        $this->assertNotNull($connection);
+        $this->assertStringContainsString('sqlite_', $connection->database);
+        $this->assertStringEndsWith('.sqlite', $connection->database);
+        $this->assertFileExists($connection->database);
+
+        // Cleanup
+        if (file_exists($connection->database)) {
+            unlink($connection->database);
+        }
+    }
+
+    public function test_user_can_create_sqlite_connection_from_sql_dump()
+    {
+        $user = User::factory()->create();
+        
+        // Create a dummy SQL file
+        $sqlContent = "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO test (name) VALUES ('foo');";
+        $file = \Illuminate\Http\UploadedFile::fake()->createWithContent('dump.sql', $sqlContent);
+
+        $response = $this->actingAs($user)->post('/connections', [
+            'name' => 'Imported SQL',
+            'driver' => 'sqlite',
+            'file' => $file,
+        ]);
+
+        $response->assertRedirect('/connections');
+        
+        $connection = DatabaseConnection::where('name', 'Imported SQL')->first();
+        $this->assertNotNull($connection);
+        $this->assertStringContainsString('sqlite_', $connection->database);
+        $this->assertStringEndsWith('.sqlite', $connection->database);
+        $this->assertFileExists($connection->database);
+        
+        // Verify contents (optional, but good)
+        // We can use sqlite3 to check if table exists
+        $output = shell_exec("sqlite3 " . escapeshellarg($connection->database) . " 'SELECT count(*) FROM test;'");
+        $this->assertEquals("1\n", $output);
+
+        // Cleanup
+        if (file_exists($connection->database)) {
+            unlink($connection->database);
+        }
+    }
+
     public function test_password_is_encrypted()
     {
         $user = User::factory()->create();

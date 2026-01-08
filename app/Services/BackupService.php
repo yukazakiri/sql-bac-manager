@@ -40,6 +40,8 @@ class BackupService
         try {
             if ($connection->driver === 'pgsql') {
                 $this->backupPgsql($connection, $tempPath, $backupType);
+            } elseif ($connection->driver === 'sqlite') {
+                $this->backupSqlite($connection, $tempPath);
             } else {
                 $this->backupMysql($connection, $tempPath, $backupType);
             }
@@ -141,6 +143,17 @@ class BackupService
         $this->runProcess($fullCommand, $env);
     }
 
+    protected function backupSqlite(DatabaseConnection $connection, string $path)
+    {
+        $fullCommand = sprintf(
+            'sqlite3 %s .dump > %s',
+            escapeshellarg($connection->database),
+            escapeshellarg($path)
+        );
+
+        $this->runProcess($fullCommand);
+    }
+
     public function restore(DatabaseConnection $connection, string $filename, BackupDisk $disk)
     {
         $diskInstance = $disk->getDisk();
@@ -162,6 +175,8 @@ class BackupService
 
             if ($connection->driver === 'pgsql') {
                 $this->restorePgsql($connection, $tempPath);
+            } elseif ($connection->driver === 'sqlite') {
+                $this->restoreSqlite($connection, $tempPath);
             } else {
                 $this->restoreMysql($connection, $tempPath);
             }
@@ -192,6 +207,17 @@ class BackupService
         $this->runProcess($fullCommand, $env);
     }
 
+    protected function restoreSqlite(DatabaseConnection $connection, string $path)
+    {
+        $fullCommand = sprintf(
+            'sqlite3 %s < %s',
+            escapeshellarg($connection->database),
+            escapeshellarg($path)
+        );
+
+        $this->runProcess($fullCommand);
+    }
+
     protected function restorePgsql(DatabaseConnection $connection, string $path)
     {
         $env = null;
@@ -199,8 +225,8 @@ class BackupService
             $env = ['PGPASSWORD' => $connection->password];
         }
 
-        // pg_restore is used for custom format dumps
-        $fullCommand = sprintf(
+        // Try pg_restore first (for custom format dumps)
+        $restoreCommand = sprintf(
             'pg_restore -h %s -p %s -U %s -d %s -c --no-owner %s', // -c to clean, --no-owner to skip ownership changes
             escapeshellarg($connection->host),
             escapeshellarg($connection->port),
@@ -209,16 +235,30 @@ class BackupService
             escapeshellarg($path)
         );
 
-        $this->runProcess($fullCommand, $env);
+        try {
+            $this->runProcess($restoreCommand, $env, [0, 1]);
+        } catch (ProcessFailedException $e) {
+            // If pg_restore fails, try psql (for plain SQL dumps)
+            $psqlCommand = sprintf(
+                'psql -h %s -p %s -U %s -d %s -f %s',
+                escapeshellarg($connection->host),
+                escapeshellarg($connection->port),
+                escapeshellarg($connection->username),
+                escapeshellarg($connection->database),
+                escapeshellarg($path)
+            );
+
+            $this->runProcess($psqlCommand, $env);
+        }
     }
 
-    protected function runProcess(string $command, ?array $env = null)
+    protected function runProcess(string $command, ?array $env = null, array $allowedExitCodes = [0])
     {
         $process = Process::fromShellCommandline($command, null, $env);
         $process->setTimeout(300);
         $process->run();
 
-        if (!$process->isSuccessful()) {
+        if (!in_array($process->getExitCode(), $allowedExitCodes)) {
             throw new ProcessFailedException($process);
         }
     }
